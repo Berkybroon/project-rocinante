@@ -278,16 +278,15 @@ func writeReport(path string, contents string) error {
 // It processes command-line arguments, builds the directory tree,
 // generates the HTML report, and writes it to a file.
 func main() {
-	root := "C:\\"
-	outputPath := "disk_report.html"
+	if len(os.Args) != 3 {
+		fmt.Fprintf(os.Stderr, "Usage: %s [root-directory] [output-file]\n", filepath.Base(os.Args[0]))
+		fmt.Fprintln(os.Stderr, "  root-directory: folder to scan (e.g. C:\\ or .)")
+		fmt.Fprintln(os.Stderr, "  output-file: where to write the HTML report (e.g. .\\report.html)")
+		os.Exit(1)
+	}
 
-	// Take user input to set the root directory and report output path via command line arguments
-	if len(os.Args) > 1 {
-		root = os.Args[1]
-	}
-	if len(os.Args) > 2 {
-		outputPath = os.Args[2]
-	}
+	root := os.Args[1]
+	outputPath := os.Args[2]
 
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
