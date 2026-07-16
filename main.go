@@ -281,6 +281,7 @@ func main() {
 	root := "C:\\"
 	outputPath := "disk_report.html"
 
+	// Take user input to set the root directory and report output path via command line arguments
 	if len(os.Args) > 1 {
 		root = os.Args[1]
 	}
@@ -294,12 +295,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Build the directory tree starting from the specified root path and handle errors
 	tree, err := buildTree(root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error scanning:", err)
 		os.Exit(1)
 	}
 
+	// Count the total number of files and their cumulative size in bytes
+	// then generate the HTML report and write it to the specified output path
 	totalFiles, totalBytes := countFiles(tree)
 	htmlReport := renderHTML(tree, absRoot, totalFiles, totalBytes)
 	if err := writeReport(outputPath, htmlReport); err != nil {
@@ -307,6 +311,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// confirmation message
 	fmt.Printf("Wrote HTML report to %s\n", outputPath)
 	fmt.Printf("Root: %s\n", absRoot)
 	fmt.Printf("Files: %d\nTotal size: %s\n", totalFiles, humanSize(totalBytes))
