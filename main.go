@@ -12,7 +12,10 @@ import (
 	"unsafe"
 )
 
-const maxFilesPerFolder = 10
+const (
+	maxFilesPerFolder = 10
+	maxDirsPerFolder  = 50
+)
 
 var (
 	modkernel32                = syscall.NewLazyDLL("kernel32.dll")
@@ -28,6 +31,7 @@ type treeNode struct {
 	Children          []*treeNode
 	DisplayedChildren []*treeNode
 	HiddenFiles       int
+	HiddenDirs        int
 }
 
 // summarizeTree limits the number of visible files in each directory to maxFiles
@@ -64,7 +68,13 @@ func summarizeTree(node *treeNode, maxFiles int) {
 
 	// Build the list of children to display in the HTML report while keeping the full tree for totals
 	visible := make([]*treeNode, 0, len(dirs)+len(files))
-	visible = append(visible, dirs...)
+	if len(dirs) > maxDirsPerFolder {
+		visible = append(visible, dirs[:maxDirsPerFolder]...)
+		node.HiddenDirs = len(dirs) - maxDirsPerFolder
+	} else {
+		visible = append(visible, dirs...)
+		node.HiddenDirs = 0
+	}
 	if len(files) > maxFiles {
 		visible = append(visible, files[:maxFiles]...)
 		node.HiddenFiles = len(files) - maxFiles
@@ -242,6 +252,9 @@ func renderNodeHTML(node *treeNode, isRoot bool) string {
 	}
 	for _, child := range children {
 		b.WriteString(renderNodeHTML(child, false))
+	}
+	if node.HiddenDirs > 0 {
+		b.WriteString(fmt.Sprintf("<li class=\"summary\">+ %d more folder(s) not shown</li>", node.HiddenDirs))
 	}
 	if node.HiddenFiles > 0 {
 		b.WriteString(fmt.Sprintf("<li class=\"summary\">+ %d more file(s) not shown</li>", node.HiddenFiles))
