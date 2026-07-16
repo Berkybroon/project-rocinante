@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,56 +12,149 @@ import (
 	"unsafe"
 )
 
-type fileEntry struct {
-	Path string
-	Size int64
+const maxFilesPerFolder = 10
+
+type treeNode struct {
+	Name        string
+	Path        string
+	Size        int64
+	IsDir       bool
+	Children    []*treeNode
+	HiddenFiles int
 }
 
-func walkdir(root string) ([]fileEntry, error) {
-	var entries []fileEntry
+func buildTree(root string) (*treeNode, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return &treeNode{Name: filepath.Base(root), Path: root, Size: getAllocatedSize(root, info), IsDir: false}, nil
+	}
 
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			// Log permission errors and continue
-			if os.IsPermission(err) || strings.Contains(err.Error(), "Access is denied") {
-				fmt.Fprintf(os.Stderr, "skipping %s: %v\n", path, err)
-				return nil
+	node := &treeNode{
+		Name:  filepath.Base(root),
+		Path:  root,
+		IsDir: true,
+	}
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsPermission(err) || strings.Contains(err.Error(), "Access is denied") {
+			fmt.Fprintf(os.Stderr, "skipping %s: %v\n", root, err)
+			return node, nil
+		}
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		childPath := filepath.Join(root, entry.Name())
+		if entry.IsDir() {
+			child, err := buildTree(childPath)
+			if err != nil {
+				if os.IsPermission(err) || strings.Contains(err.Error(), "Access is denied") {
+					fmt.Fprintf(os.Stderr, "skipping %s: %v\n", childPath, err)
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "error scanning %s: %v\n", childPath, err)
+				continue
 			}
-			return err
+			node.Children = append(node.Children, child)
+			continue
 		}
-		if d.IsDir() {
-			return nil
-		}
-		info, err := d.Info()
+
+		info, err := entry.Info()
 		if err != nil {
 			if os.IsPermission(err) || strings.Contains(err.Error(), "Access is denied") {
-				fmt.Fprintf(os.Stderr, "skipping %s: %v\n", path, err)
-				return nil
+				fmt.Fprintf(os.Stderr, "skipping %s: %v\n", childPath, err)
+				continue
 			}
-			return err
+			fmt.Fprintf(os.Stderr, "error scanning %s: %v\n", childPath, err)
+			continue
 		}
-		alloc := getAllocatedSize(path, info)
-		entries = append(entries, fileEntry{Path: path, Size: alloc})
-		return nil
+
+		node.Children = append(node.Children, &treeNode{
+			Name:  entry.Name(),
+			Path:  childPath,
+			Size:  getAllocatedSize(childPath, info),
+			IsDir: false,
+		})
+	}
+
+	node.Size = sumNodeSize(node)
+	summarizeTree(node, maxFilesPerFolder)
+	return node, nil
+}
+
+func summarizeTree(node *treeNode, maxFiles int) {
+	if node == nil || !node.IsDir {
+		return
+	}
+
+	var dirs []*treeNode
+	var files []*treeNode
+	for _, child := range node.Children {
+		if child.IsDir {
+			dirs = append(dirs, child)
+			continue
+		}
+		files = append(files, child)
+	}
+
+	sort.Slice(dirs, func(i, j int) bool {
+		if dirs[i].Size == dirs[j].Size {
+			return dirs[i].Name < dirs[j].Name
+		}
+		return dirs[i].Size > dirs[j].Size
+	})
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].Size == files[j].Size {
+			return files[i].Name < files[j].Name
+		}
+		return files[i].Size > files[j].Size
 	})
 
-	return entries, err
-}
+	visible := make([]*treeNode, 0, len(dirs)+len(files))
+	visible = append(visible, dirs...)
+	if len(files) > maxFiles {
+		visible = append(visible, files[:maxFiles]...)
+		node.HiddenFiles = len(files) - maxFiles
+	} else {
+		visible = append(visible, files...)
+		node.HiddenFiles = 0
+	}
+	node.Children = visible
 
-func aggregateByDir(entries []fileEntry) map[string]int64 {
-	totals := make(map[string]int64)
-	for _, e := range entries {
-		dir := filepath.Dir(e.Path)
-		for {
-			totals[dir] += e.Size
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
+	for _, child := range node.Children {
+		if child.IsDir {
+			summarizeTree(child, maxFiles)
 		}
 	}
-	return totals
+}
+
+func sumNodeSize(node *treeNode) int64 {
+	if !node.IsDir {
+		return node.Size
+	}
+	var total int64
+	for _, child := range node.Children {
+		total += sumNodeSize(child)
+	}
+	return total
+}
+
+func countFiles(node *treeNode) (int, int64) {
+	if !node.IsDir {
+		return 1, node.Size
+	}
+	var totalFiles int
+	var totalBytes int64
+	for _, child := range node.Children {
+		files, bytes := countFiles(child)
+		totalFiles += files
+		totalBytes += bytes
+	}
+	return totalFiles, totalBytes
 }
 
 var (
@@ -104,50 +198,88 @@ func humanSize(b int64) string {
 	}
 }
 
+func renderHTML(root *treeNode, rootPath string, totalFiles int, totalBytes int64) string {
+	var b strings.Builder
+	b.WriteString("<!DOCTYPE html>")
+	b.WriteString("<html lang=\"en\">")
+	b.WriteString("<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Directory Report</title>")
+	b.WriteString("<style>")
+	b.WriteString("body{font-family:Segoe UI, Arial, sans-serif; margin:24px; color:#1f2937; background:#f8fafc;} ")
+	b.WriteString("h1{margin-bottom:8px;} .meta{color:#475569; margin-bottom:16px;} .warning{background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:12px 14px; border-radius:8px; margin-bottom:16px;} .tree{list-style:none; padding-left:18px;} ")
+	b.WriteString("details{margin:4px 0;} summary{cursor:pointer; font-weight:600; padding:2px 4px; border-radius:4px;} summary:hover{background:#e2e8f0;} ")
+	b.WriteString("li{margin:4px 0;} .file{color:#334155;} .summary{color:#64748b; font-style:italic;} .size{color:#64748b; margin-left:8px; font-size:0.95em;} .children{margin-left:16px; padding-left:8px; border-left:1px solid #cbd5e1;} ")
+	b.WriteString("</style></head><body>")
+	b.WriteString(fmt.Sprintf("<h1>Directory report</h1><div class=\"warning\"><strong>Warning:</strong> Results may be incomplete if this report was generated without administrator elevation. Some folders may be skipped or inaccessible.</div><div class=\"meta\"><strong>Root:</strong> %s<br><strong>Files:</strong> %d<br><strong>Total size:</strong> %s</div>", html.EscapeString(rootPath), totalFiles, html.EscapeString(humanSize(totalBytes))))
+	b.WriteString("<ul class=\"tree\">")
+	b.WriteString(renderNodeHTML(root, true))
+	b.WriteString("</ul></body></html>")
+	return b.String()
+}
+
+func renderNodeHTML(node *treeNode, isRoot bool) string {
+	if !node.IsDir {
+		return fmt.Sprintf("<li class=\"file\">%s <span class=\"size\">%s</span></li>", html.EscapeString(node.Name), html.EscapeString(humanSize(node.Size)))
+	}
+
+	var b strings.Builder
+	b.WriteString("<li>")
+	openAttr := ""
+	if isRoot {
+		openAttr = " open"
+	}
+	b.WriteString(fmt.Sprintf("<details class=\"dir\"%s><summary>%s <span class=\"size\">%s</span></summary><div class=\"children\">", openAttr, html.EscapeString(node.Name), html.EscapeString(humanSize(node.Size))))
+	b.WriteString("<ul class=\"tree\">")
+	for _, child := range node.Children {
+		b.WriteString(renderNodeHTML(child, false))
+	}
+	if node.HiddenFiles > 0 {
+		b.WriteString(fmt.Sprintf("<li class=\"summary\">+ %d more file(s) not shown</li>", node.HiddenFiles))
+	}
+	b.WriteString("</ul></div></details></li>")
+	return b.String()
+}
+
+func writeReport(path string, contents string) error {
+	outputDir := filepath.Dir(path)
+	if outputDir != "." && outputDir != "" {
+		if err := os.MkdirAll(outputDir, 0o755); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, []byte(contents), 0o644)
+}
+
 func main() {
 	root := "C:\\"
-	absRoot, _ := filepath.Abs(root)
+	outputPath := "disk_report.html"
 
-	entries, err := walkdir(root)
+	if len(os.Args) > 1 {
+		root = os.Args[1]
+	}
+	if len(os.Args) > 2 {
+		outputPath = os.Args[2]
+	}
+
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error resolving root:", err)
+		os.Exit(1)
+	}
+
+	tree, err := buildTree(root)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error scanning:", err)
 		os.Exit(1)
 	}
 
-	var totalFiles int
-	var totalBytes int64
-	for _, e := range entries {
-		totalFiles++
-		totalBytes += e.Size
+	totalFiles, totalBytes := countFiles(tree)
+	htmlReport := renderHTML(tree, absRoot, totalFiles, totalBytes)
+	if err := writeReport(outputPath, htmlReport); err != nil {
+		fmt.Fprintln(os.Stderr, "error writing report:", err)
+		os.Exit(1)
 	}
 
-	totals := aggregateByDir(entries)
-
-	type dirTotal struct {
-		Path string
-		Size int64
-	}
-
-	var list []dirTotal
-	for p, s := range totals {
-		rel, err := filepath.Rel(absRoot, p)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			continue
-		}
-		list = append(list, dirTotal{Path: p, Size: s})
-	}
-
-	sort.Slice(list, func(i, j int) bool { return list[i].Size > list[j].Size })
-
-	top := 20
-	if len(list) < top {
-		top = len(list)
-	}
-
-	fmt.Printf("Top %d directories under %s:\n", top, absRoot)
-	for i := 0; i < top; i++ {
-		fmt.Printf("%10s  %s\n", humanSize(list[i].Size), list[i].Path)
-	}
-
-	fmt.Printf("\nFiles: %d\nTotal size: %s\n", totalFiles, humanSize(totalBytes))
+	fmt.Printf("Wrote HTML report to %s\n", outputPath)
+	fmt.Printf("Root: %s\n", absRoot)
+	fmt.Printf("Files: %d\nTotal size: %s\n", totalFiles, humanSize(totalBytes))
 }
