@@ -302,6 +302,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	fmt.Println("Now scanning, please wait...")
+
 	// Build the directory tree starting from the specified root path and handle errors
 	tree, err := buildTree(root)
 	if err != nil {
