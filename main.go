@@ -277,7 +277,9 @@ func writeReport(path string, contents string) error {
 // main is the entry point of the program.
 // It processes command-line arguments, builds the directory tree,
 // generates the HTML report, and writes it to a file.
+
 func main() {
+	// print usage instructions if the number of arguments is incorrect
 	if len(os.Args) != 3 {
 		fmt.Fprintf(os.Stderr, "Usage: %s [root-directory] [output-file]\n", filepath.Base(os.Args[0]))
 		fmt.Fprintln(os.Stderr, "  root-directory: folder to scan (e.g. C:\\ or .)")
