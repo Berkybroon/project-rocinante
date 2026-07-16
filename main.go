@@ -21,12 +21,13 @@ var (
 
 // treeNode represents a node in the directory tree. can be either a file or a directory
 type treeNode struct {
-	Name        string
-	Path        string
-	Size        int64
-	IsDir       bool
-	Children    []*treeNode
-	HiddenFiles int
+	Name              string
+	Path              string
+	Size              int64
+	IsDir             bool
+	Children          []*treeNode
+	DisplayedChildren []*treeNode
+	HiddenFiles       int
 }
 
 // summarizeTree limits the number of visible files in each directory to maxFiles
@@ -61,7 +62,7 @@ func summarizeTree(node *treeNode, maxFiles int) {
 		return files[i].Size > files[j].Size
 	})
 
-	// Create a new slice for visible children, limiting the number of files to maxFiles
+	// Build the list of children to display in the HTML report while keeping the full tree for totals
 	visible := make([]*treeNode, 0, len(dirs)+len(files))
 	visible = append(visible, dirs...)
 	if len(files) > maxFiles {
@@ -70,8 +71,8 @@ func summarizeTree(node *treeNode, maxFiles int) {
 	} else {
 		visible = append(visible, files...)
 		node.HiddenFiles = 0
-	} // Update the node's children to only include the visible ones
-	node.Children = visible
+	}
+	node.DisplayedChildren = visible
 
 	// Recursively summarize the child directories
 	for _, child := range node.Children {
@@ -233,8 +234,13 @@ func renderNodeHTML(node *treeNode, isRoot bool) string {
 		openAttr = " open"
 	}
 	b.WriteString(fmt.Sprintf("<details class=\"dir\"%s><summary>%s <span class=\"size\">%s</span></summary><div class=\"children\">", openAttr, html.EscapeString(node.Name), html.EscapeString(humanSize(node.Size))))
+	b.WriteString(fmt.Sprintf("<div class=\"folder-meta\">All contents: <span class=\"size\">%s</span></div>", html.EscapeString(humanSize(node.Size))))
 	b.WriteString("<ul class=\"tree\">")
-	for _, child := range node.Children {
+	children := node.DisplayedChildren
+	if children == nil {
+		children = node.Children
+	}
+	for _, child := range children {
 		b.WriteString(renderNodeHTML(child, false))
 	}
 	if node.HiddenFiles > 0 {
@@ -252,7 +258,7 @@ func renderHTML(root *treeNode, rootPath string, totalFiles int, totalBytes int6
 	b.WriteString("<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Directory Report</title>")
 	b.WriteString("<style>")
 	b.WriteString("body{font-family:Segoe UI, Arial, sans-serif; margin:24px; color:#1f2937; background:#f8fafc;} ")
-	b.WriteString("h1{margin-bottom:8px;} .meta{color:#475569; margin-bottom:16px;} .warning{background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:12px 14px; border-radius:8px; margin-bottom:16px;} .tree{list-style:none; padding-left:18px;} ")
+	b.WriteString("h1{margin-bottom:8px;} .meta{color:#475569; margin-bottom:16px;} .warning{background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:12px 14px; border-radius:8px; margin-bottom:16px;} .tree{list-style:none; padding-left:18px;} .folder-meta{color:#64748b; font-size:0.95em; margin:4px 0 8px 0;} ")
 	b.WriteString("details{margin:4px 0;} summary{cursor:pointer; font-weight:600; padding:2px 4px; border-radius:4px;} summary:hover{background:#e2e8f0;} ")
 	b.WriteString("li{margin:4px 0;} .file{color:#334155;} .summary{color:#64748b; font-style:italic;} .size{color:#64748b; margin-left:8px; font-size:0.95em;} .children{margin-left:16px; padding-left:8px; border-left:1px solid #cbd5e1;} ")
 	b.WriteString("</style></head><body>")
