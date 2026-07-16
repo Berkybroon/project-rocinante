@@ -12,7 +12,7 @@ The program scans the directory you give it, builds a tree of folders and files,
 
 ## Usage
 
-Complining on your own machine requires Go to be installed (https://go.dev/doc/install).
+Compiling on your own machine requires Go to be installed (https://go.dev/doc/install).
 
 If you are unable to compile on your own machine, you may download a pre-compiled binary executable from the Releases page:
 https://github.com/Berkybroon/project-rocinante/releases
