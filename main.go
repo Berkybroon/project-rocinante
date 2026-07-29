@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -27,6 +28,7 @@ type treeNode struct {
 	Name              string
 	Path              string
 	Size              int64
+	Modified          int64
 	IsDir             bool
 	Children          []*treeNode
 	DisplayedChildren []*treeNode
@@ -131,14 +133,15 @@ func buildTree(root string) (*treeNode, error) {
 		return nil, err
 	}
 	if !info.IsDir() {
-		return &treeNode{Name: filepath.Base(root), Path: root, Size: getAllocatedSize(root, info), IsDir: false}, nil
+		return &treeNode{Name: filepath.Base(root), Path: root, Size: getAllocatedSize(root, info), Modified: info.ModTime().Unix(), IsDir: false}, nil
 	}
 
 	// Create a treeNode for the directory
 	node := &treeNode{
-		Name:  filepath.Base(root),
-		Path:  root,
-		IsDir: true,
+		Name:     filepath.Base(root),
+		Path:     root,
+		Modified: info.ModTime().Unix(),
+		IsDir:    true,
 	}
 
 	// Read the directory entries and handle permission errors gracefully
@@ -182,10 +185,11 @@ func buildTree(root string) (*treeNode, error) {
 
 		// Append the file node to the children of the current directory node
 		node.Children = append(node.Children, &treeNode{
-			Name:  entry.Name(),
-			Path:  childPath,
-			Size:  getAllocatedSize(childPath, info),
-			IsDir: false,
+			Name:     entry.Name(),
+			Path:     childPath,
+			Size:     getAllocatedSize(childPath, info),
+			Modified: info.ModTime().Unix(),
+			IsDir:    false,
 		})
 	}
 
@@ -231,10 +235,38 @@ func humanSize(b int64) string {
 	}
 }
 
+func formatModified(ts int64) string {
+	if ts == 0 {
+		return ""
+	}
+	return time.Unix(ts, 0).Format("2006-01-02 15:04:05")
+}
+
+func normalizeArtBanner(content string) string {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	return strings.TrimRight(content, "\n")
+}
+
+func loadArtBanner() string {
+	candidates := []string{"art.txt"}
+	if exePath, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exePath), "art.txt"))
+	}
+	for _, candidate := range candidates {
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			continue
+		}
+		return normalizeArtBanner(string(data))
+	}
+	return ""
+}
+
 // renderNodeHTML generates the HTML representation of a treeNode and its children recursively
 func renderNodeHTML(node *treeNode, isRoot bool) string {
 	if !node.IsDir {
-		return fmt.Sprintf("<li class=\"file\">%s <span class=\"size\">%s</span></li>", html.EscapeString(node.Name), html.EscapeString(humanSize(node.Size)))
+		return fmt.Sprintf("<li class=\"file\"><table class=\"entry-table\"><tr class=\"entry\"><td class=\"entry-name\">%s</td><td class=\"entry-size\">%s</td><td class=\"entry-meta\">%s</td></tr></table></li>", html.EscapeString(node.Name), html.EscapeString(humanSize(node.Size)), html.EscapeString(formatModified(node.Modified)))
 	}
 
 	var b strings.Builder
@@ -243,7 +275,7 @@ func renderNodeHTML(node *treeNode, isRoot bool) string {
 	if isRoot {
 		openAttr = " open"
 	}
-	b.WriteString(fmt.Sprintf("<details class=\"dir\"%s><summary>%s <span class=\"size\">%s</span></summary><div class=\"children\">", openAttr, html.EscapeString(node.Name), html.EscapeString(humanSize(node.Size))))
+	b.WriteString(fmt.Sprintf("<details class=\"dir\"%s><summary><table class=\"entry-table\"><tr class=\"entry\"><td class=\"entry-name\">%s</td><td class=\"entry-size\">%s</td><td class=\"entry-meta\">%s</td></tr></table></summary><div class=\"children\">", openAttr, html.EscapeString(node.Name), html.EscapeString(humanSize(node.Size)), html.EscapeString(formatModified(node.Modified))))
 	b.WriteString(fmt.Sprintf("<div class=\"folder-meta\">All contents: <span class=\"size\">%s</span></div>", html.EscapeString(humanSize(node.Size))))
 	b.WriteString("<ul class=\"tree\">")
 	children := node.DisplayedChildren
@@ -273,7 +305,7 @@ func renderHTML(root *treeNode, rootPath string, totalFiles int, totalBytes int6
 	b.WriteString("body{font-family:Segoe UI, Arial, sans-serif; margin:24px; color:#1f2937; background:#f8fafc;} ")
 	b.WriteString("h1{margin-bottom:8px;} .meta{color:#475569; margin-bottom:16px;} .warning{background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:12px 14px; border-radius:8px; margin-bottom:16px;} .tree{list-style:none; padding-left:18px;} .folder-meta{color:#64748b; font-size:0.95em; margin:4px 0 8px 0;} ")
 	b.WriteString("details{margin:4px 0;} summary{cursor:pointer; font-weight:600; padding:2px 4px; border-radius:4px;} summary:hover{background:#e2e8f0;} ")
-	b.WriteString("li{margin:4px 0;} .file{color:#334155;} .summary{color:#64748b; font-style:italic;} .size{color:#64748b; margin-left:8px; font-size:0.95em;} .children{margin-left:16px; padding-left:8px; border-left:1px solid #cbd5e1;} ")
+	b.WriteString("li{margin:4px 0;} .file{color:#334155;} .summary{color:#64748b; font-style:italic;} .size{color:#64748b; margin-left:8px; font-size:0.95em;} .children{margin-left:16px; padding-left:8px; border-left:1px solid #cbd5e1;} .entry-table{border-collapse:collapse; width:100%; table-layout:fixed;} .entry{display:table-row;} .entry-name{display:table-cell; padding-right:12px; overflow-wrap:anywhere; width:70%;} .entry-size{display:table-cell; color:#64748b; font-size:0.95em; padding-right:12px; white-space:nowrap; width:15%;} .entry-meta{display:table-cell; color:#64748b; font-size:0.95em; white-space:nowrap; text-align:right; width:15%;} ")
 	b.WriteString("</style></head><body>")
 	b.WriteString("<h1>Directory report</h1>")
 	b.WriteString("<div class=\"warning\"><strong>Warning:</strong> Results may be incomplete if this report was generated without administrator elevation. Some folders may be skipped or inaccessible.</div>")
@@ -318,7 +350,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Now scanning, please wait...")
+	artBanner := loadArtBanner()
+	if artBanner != "" {
+		fmt.Println()
+		fmt.Println(artBanner)
+		fmt.Println()
+	}
+	fmt.Println("Now scanning", absRoot, ", please wait...")
 
 	// Build the directory tree starting from the specified root path and handle errors
 	tree, err := buildTree(root)
@@ -337,7 +375,7 @@ func main() {
 	}
 
 	// confirmation message
-	fmt.Printf("Wrote HTML report to %s\n", outputPath)
+	fmt.Printf("Wrote HTML report to: %s\n", outputPath)
 	fmt.Printf("Root: %s\n", absRoot)
-	fmt.Printf("Files: %d\nTotal size: %s\n", totalFiles, humanSize(totalBytes))
+	fmt.Printf("Files: %d\nTotal report size: %s\n", totalFiles, humanSize(totalBytes))
 }
