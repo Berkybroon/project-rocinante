@@ -1,0 +1,7 @@
+when no command line arugments are included, prompt Y/N to use default settings (scan root C:\, output to working dir)
+
+extra command line arguments:
+verbose mode - include all files + folders (will be very slow)
+different output types (json, xml?)
+
+maybe some 'animation' on the comfort text? eg just an elipse going . .. ... . .. ...
