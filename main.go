@@ -341,6 +341,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// use command line args
 	root := os.Args[1]
 	outputPath := os.Args[2]
 
@@ -356,6 +357,7 @@ func main() {
 		fmt.Println(artBanner)
 		fmt.Println()
 	}
+
 	fmt.Println("Now scanning", absRoot, ", please wait...")
 
 	// Build the directory tree starting from the specified root path and handle errors
