@@ -1,7 +1,9 @@
+fix the "total report size" output. it currently reports filesystem size instead.
+
+send comfort output to the console every few seconds while the scan is ongoing
+
 when no command line arugments are included, prompt Y/N to use default settings (scan root C:\, output to working dir)
 
 extra command line arguments:
 verbose mode - include all files + folders (will be very slow)
 different output types (json, xml?)
-
-maybe some 'animation' on the comfort text? eg just an elipse going . .. ... . .. ...
